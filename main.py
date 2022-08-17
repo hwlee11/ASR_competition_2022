@@ -8,25 +8,25 @@ import json
 import argparse
 from glob import glob
 
-from modules.preprocess import preprocessing
-from modules.trainer import trainer
-from modules.utils import (
+from tools.preprocess import preprocessing
+from tools.trainer import trainer
+from tools.utils import (
     get_optimizer,
     get_criterion,
     get_lr_scheduler,
 )
-from modules.audio import (
+from tools.audio import (
     FilterBankConfig,
     MelSpectrogramConfig,
     MfccConfig,
     SpectrogramConfig,
 )
-from modules.model import build_model
-from modules.vocab import KoreanSpeechVocabulary
-from modules.data import split_dataset, collate_fn
-from modules.utils import Optimizer
-from modules.metrics import get_metric
-from modules.inference import single_infer
+from tools.model import build_model
+from tools.vocab import KoreanSpeechVocabulary
+from tools.data import split_dataset, collate_fn
+from tools.utils import Optimizer
+from tools.metrics import get_metric
+from tools.inference import single_infer
 
 
 from torch.utils.data import DataLoader
@@ -173,6 +173,20 @@ if __name__ == '__main__':
 
         train_begin_time = time.time()
 
+        # valid
+
+        valid_loader = DataLoader(
+                valid_dataset,
+                batch_size=config.batch_size,
+                shuffle=True,
+                collate_fn=collate_fn,
+                num_workers=config.num_workers
+        )
+
+        for feat,target,in_len,t_len in valid_loader:
+            print(feat,target,in_len,t_len)
+            exit()
+        '''
         for epoch in range(num_epochs):
             print('[INFO] Epoch %d start' % epoch)
 
@@ -239,3 +253,4 @@ if __name__ == '__main__':
             torch.cuda.empty_cache()
             print(f'[INFO] epoch {epoch} is done')
         print('[INFO] train process is done')
+        '''
