@@ -1,4 +1,0 @@
-[submodule "kospeech"]
-	path = kospeech
-	url = https://github.com/sooftware/kospeech.git
-	branch = latest
