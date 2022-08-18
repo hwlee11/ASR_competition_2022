@@ -150,19 +150,74 @@ class Optimizer(object):
         for g in self.optimizer.param_groups:
             g['lr'] = lr
 
+class TransformerLRScheduler(LearningRateScheduler):
+    """ Transformer Learning Rate Scheduler proposed in "Attention Is All You Need" """
+    def __init__(self, optimizer, peak_lr, final_lr, final_lr_scale, warmup_steps, decay_steps):
+        assert isinstance(warmup_steps, int), "warmup_steps should be inteager type"
+        assert isinstance(decay_steps, int), "total_steps should be inteager type"
+
+        super(TransformerLRScheduler, self).__init__(optimizer, 0.0)
+        self.final_lr = final_lr
+        self.peak_lr = peak_lr
+        self.warmup_steps = warmup_steps
+        self.decay_steps = decay_steps
+
+        self.warmup_rate = self.peak_lr / self.warmup_steps
+        self.decay_factor = -math.log(final_lr_scale) / self.decay_steps
+
+        self.lr = self.init_lr
+        self.update_step = 0
+
+    def _decide_stage(self):
+        if self.update_step < self.warmup_steps:
+            return 0, self.update_step
+
+        if self.warmup_steps <= self.update_step < self.warmup_steps + self.decay_steps:
+            return 1, self.update_step - self.warmup_steps
+
+        return 2, None
+
+    def step(self):
+        self.update_step += 1
+        stage, steps_in_stage = self._decide_stage()
+
+        if stage == 0:
+            self.lr = self.update_step * self.warmup_rate
+        elif stage == 1:
+            self.lr = self.peak_lr * math.exp(-self.decay_factor * steps_in_stage)
+        elif stage == 2:
+            self.lr = self.final_lr
+        else:
+            raise ValueError("Undefined stage")
+
+        self.set_lr(self.optimizer, self.lr)
+
+        return self.lr
 
 def get_lr_scheduler(config, optimizer, epoch_time_step) -> LearningRateScheduler:
 
-    lr_scheduler = TriStageLRScheduler(
-        optimizer=optimizer,
-        init_lr=config.init_lr,
-        peak_lr=config.peak_lr,
-        final_lr=config.final_lr,
-        init_lr_scale=config.init_lr_scale,
-        final_lr_scale=config.final_lr_scale,
-        warmup_steps=config.warmup_steps,
-        total_steps=int(config.num_epochs * epoch_time_step),
-    )
+    if config.lr_scheduler == 'tri_stage_lr_scheduler':
+            lr_scheduler = TriStageLRScheduler(
+            optimizer=optimizer,
+            init_lr=config.init_lr,
+            peak_lr=config.peak_lr,
+            final_lr=config.final_lr,
+            init_lr_scale=config.init_lr_scale,
+            final_lr_scale=config.final_lr_scale,
+            warmup_steps=config.warmup_steps,
+            total_steps=int(config.num_epochs * epoch_time_step),
+        )
+    elif config.lr_scheduler == 'transformer_lr_scheduler':
+            lr_scheduler = TransformerLRScheduler(
+            optimizer=optimizer,
+            peak_lr=config.peak_lr,
+            final_lr=config.final_lr,
+            final_lr_scale=config.final_lr_scale,
+            warmup_steps=config.warmup_steps,
+            decay_steps=config.decay_steps,
+        )
+    else:
+        raise ValueError(f"Unsupported Learning Rate Scheduler: {config.train.lr_scheduler}")
 
     return lr_scheduler
 

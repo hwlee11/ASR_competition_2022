@@ -161,7 +161,7 @@ if __name__ == '__main__':
     random.seed(config.seed)
     torch.manual_seed(config.seed)
     torch.cuda.manual_seed_all(config.seed)
-    device = 'cuda' if config.use_cuda == True else 'cpu'
+    device = 'cuda:1' if config.use_cuda == True else 'cpu'
     if hasattr(config, "num_threads") and int(config.num_threads) > 0:
         torch.set_num_threads(config.num_threads)
 

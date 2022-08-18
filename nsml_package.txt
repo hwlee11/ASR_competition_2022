@@ -1,3 +1,2 @@
-vim
-git
-sox
+libsndfile
+ffmpeg
