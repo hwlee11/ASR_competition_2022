@@ -22,6 +22,7 @@ from tools.audio import (
     SpectrogramConfig,
 )
 from tools.model import build_model
+from tools.model_builder import build_conformer
 from tools.vocab import KoreanSpeechVocabulary
 from tools.data import split_dataset, collate_fn
 from tools.utils import Optimizer
@@ -85,8 +86,8 @@ if __name__ == '__main__':
 
     args.add_argument('--use_cuda', type=bool, default=True)
     args.add_argument('--seed', type=int, default=777)
-    args.add_argument('--num_epochs', type=int, default=10)
-    args.add_argument('--batch_size', type=int, default=128)
+    args.add_argument('--num_epochs', type=int, default=20)
+    args.add_argument('--batch_size', type=int, default=32)
     args.add_argument('--save_result_every', type=int, default=10)
     args.add_argument('--checkpoint_every', type=int, default=1)
     args.add_argument('--print_every', type=int, default=50)
@@ -95,19 +96,21 @@ if __name__ == '__main__':
     args.add_argument('--num_workers', type=int, default=8)
     args.add_argument('--num_threads', type=int, default=16)
     args.add_argument('--init_lr', type=float, default=1e-06)
-    args.add_argument('--final_lr', type=float, default=1e-06)
+    args.add_argument('--final_lr', type=float, default=1e-07)
     args.add_argument('--peak_lr', type=float, default=1e-04)
+    #args.add_argument('--peak_lr', type=float, default= 0.05/math.sqrt(512))
     args.add_argument('--init_lr_scale', type=float, default=1e-02)
-    args.add_argument('--final_lr_scale', type=float, default=5e-02)
+    args.add_argument('--final_lr_scale', type=float, default=0.05)
     args.add_argument('--max_grad_norm', type=int, default=400)
     args.add_argument('--warmup_steps', type=int, default=1000)
-    args.add_argument('--weight_decay', type=float, default=1e-05)
+    args.add_argument('--weight_decay', type=float, default=1e-06)
     args.add_argument('--reduction', type=str, default='mean')
     args.add_argument('--optimizer', type=str, default='adam')
-    args.add_argument('--lr_scheduler', type=str, default='tri_stage_lr_scheduler')
+    args.add_argument('--lr_scheduler', type=str, default='transformer_lr_scheduler')
+    #args.add_argument('--lr_scheduler', type=str, default='tri_stage_lr_scheduler')
     args.add_argument('--total_steps', type=int, default=200000)
 
-    args.add_argument('--architecture', type=str, default='deepspeech2')
+    args.add_argument('--architecture', type=str, default='conformer')
     args.add_argument('--use_bidirectional', type=bool, default=True)
     args.add_argument('--dropout', type=float, default=3e-01)
     args.add_argument('--num_encoder_layers', type=int, default=3)
@@ -119,6 +122,23 @@ if __name__ == '__main__':
     args.add_argument('--teacher_forcing_step', type=float, default=0.0)
     args.add_argument('--min_teacher_forcing_ratio', type=float, default=1.0)
     args.add_argument('--joint_ctc_attention', type=bool, default=False)
+
+    #args.add_argument('--',default=)
+    args.add_argument('--encoder_dim',dtype=int,default=512)
+    args.add_argument('--decoder_dim',dtype=int,,default=640)
+    args.add_argument('--num_encoder_layers',dtype=int,,default=17)
+    args.add_argument('--num_decoder_layers',dtype=int,,default=1)
+    args.add_argument('--decoder_rnn_type',dtype=str,default="lstm")
+    args.add_argument('--num_attention_heads',dtype=int,,default=8)
+    args.add_argument('--feed_forward_expansion_factor',dtype=int,,default=4)
+    args.add_argument('--conv_expansion_factor',dtype=int,,default=2)
+    args.add_argument('--input_dropout_p',dtype=float,default=0.1)
+    args.add_argument('--attention_dropout_p',dtype=float,default=0.1)
+    args.add_argument('--conv_dropout_p',dtype=float,default=0.1)
+    args.add_argument('--decoder_dropout_p',dtype=float,default=0.1)
+    args.add_argument('--conv_kernel_size',dtype=int,,default=31)
+    args.add_argument('--half_step_residual',dtype=str,default=True)
+    args.add_argument('--decoder',dtype=str,default="None")
 
     args.add_argument('--audio_extension', type=str, default='pcm')
     args.add_argument('--transform_method', type=str, default='fbank')
@@ -147,7 +167,10 @@ if __name__ == '__main__':
 
     vocab = KoreanSpeechVocabulary(os.path.join(os.getcwd(), 'labels.csv'), output_unit='character')
 
-    model = build_model(config, vocab, device)
+    if config.architecture == 'deepspeech2':
+        model = build_model(config, vocab, device)
+    elif config.architecture == 'confomer':
+        model = build_conformer(config,vocab,device)
 
     optimizer = get_optimizer(model, config)
     bind_model(model, optimizer=optimizer)
@@ -173,20 +196,19 @@ if __name__ == '__main__':
 
         train_begin_time = time.time()
 
-        # valid
+        ## valid
+        #valid_loader = DataLoader(
+        #        valid_dataset,
+        #        batch_size=config.batch_size,
+        #        shuffle=True,
+        #        collate_fn=collate_fn,
+        #        num_workers=config.num_workers
+        #)
 
-        valid_loader = DataLoader(
-                valid_dataset,
-                batch_size=config.batch_size,
-                shuffle=True,
-                collate_fn=collate_fn,
-                num_workers=config.num_workers
-        )
-
-        for feat,target,in_len,t_len in valid_loader:
-            print(feat,target,in_len,t_len)
-            exit()
-        '''
+        #for feat,target,in_len,t_len in valid_loader:
+        #    print(feat,target,in_len,t_len)
+        #    exit()
+        
         for epoch in range(num_epochs):
             print('[INFO] Epoch %d start' % epoch)
 
@@ -253,4 +275,4 @@ if __name__ == '__main__':
             torch.cuda.empty_cache()
             print(f'[INFO] epoch {epoch} is done')
         print('[INFO] train process is done')
-        '''
+        
