@@ -16,9 +16,9 @@ import torch
 from torch import Tensor
 from typing import Tuple, Optional
 
-from kospeech.models.conformer.encoder import ConformerEncoder
-from kospeech.models.model import TransducerModel
-from kospeech.models.rnnt.decoder import DecoderRNNT
+from tools.models.conformer.encoder import ConformerEncoder
+from tools.models.model import TransducerModel
+from tools.models.rnnt.decoder import DecoderRNNT
 
 
 class Conformer(TransducerModel):

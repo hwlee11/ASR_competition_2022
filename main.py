@@ -125,18 +125,18 @@ if __name__ == '__main__':
 
     #args.add_argument('--',default=)
     args.add_argument('--encoder_dim',dtype=int,default=512)
-    args.add_argument('--decoder_dim',dtype=int,,default=640)
-    args.add_argument('--num_encoder_layers',dtype=int,,default=17)
-    args.add_argument('--num_decoder_layers',dtype=int,,default=1)
+    args.add_argument('--decoder_dim',dtype=int,default=640)
+    args.add_argument('--num_encoder_layers',dtype=int,default=17)
+    args.add_argument('--num_decoder_layers',dtype=int,default=1)
     args.add_argument('--decoder_rnn_type',dtype=str,default="lstm")
-    args.add_argument('--num_attention_heads',dtype=int,,default=8)
-    args.add_argument('--feed_forward_expansion_factor',dtype=int,,default=4)
-    args.add_argument('--conv_expansion_factor',dtype=int,,default=2)
+    args.add_argument('--num_attention_heads',dtype=int,default=8)
+    args.add_argument('--feed_forward_expansion_factor',dtype=int,default=4)
+    args.add_argument('--conv_expansion_factor',dtype=int,default=2)
     args.add_argument('--input_dropout_p',dtype=float,default=0.1)
     args.add_argument('--attention_dropout_p',dtype=float,default=0.1)
     args.add_argument('--conv_dropout_p',dtype=float,default=0.1)
     args.add_argument('--decoder_dropout_p',dtype=float,default=0.1)
-    args.add_argument('--conv_kernel_size',dtype=int,,default=31)
+    args.add_argument('--conv_kernel_size',dtype=int,default=31)
     args.add_argument('--half_step_residual',dtype=str,default=True)
     args.add_argument('--decoder',dtype=str,default="None")
 
@@ -169,7 +169,7 @@ if __name__ == '__main__':
 
     if config.architecture == 'deepspeech2':
         model = build_model(config, vocab, device)
-    elif config.architecture == 'confomer':
+    elif config.architecture == 'conformer':
         model = build_conformer(config,vocab,device)
 
     optimizer = get_optimizer(model, config)

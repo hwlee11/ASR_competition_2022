@@ -14,8 +14,8 @@
 
 from dataclasses import dataclass
 
-from kospeech.models import ModelConfig
-from kospeech.models.conformer.model import Conformer
+from tools.models import ModelConfig
+from tools.models.conformer.model import Conformer
 
 
 @dataclass

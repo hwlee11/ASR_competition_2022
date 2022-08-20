@@ -17,11 +17,11 @@ import torch.nn as nn
 from torch import Tensor
 from typing import Optional
 
-from kospeech.models.activation import GLU, Swish
-from kospeech.models.attention import RelativeMultiHeadAttention
-from kospeech.models.convolution import PointwiseConv1d, DepthwiseConv1d
-from kospeech.models.modules import Transpose, Linear
-from kospeech.models.embeddings import PositionalEncoding
+from tools.models.activation import GLU, Swish
+from tools.models.attention import RelativeMultiHeadAttention
+from tools.models.convolution import PointwiseConv1d, DepthwiseConv1d
+from tools.models.modules import Transpose, Linear
+from tools.models.embeddings import PositionalEncoding
 
 
 class FeedForwardModule(nn.Module):

@@ -17,10 +17,10 @@ import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
 
-from kospeech.models.convolution import Conv2dSubsampling
-from kospeech.models.encoder import TransducerEncoder
-from kospeech.models.modules import ResidualConnectionModule, Linear
-from kospeech.models.conformer.modules import (
+from tools.models.convolution import Conv2dSubsampling
+from tools.models.encoder import TransducerEncoder
+from tools.models.modules import ResidualConnectionModule, Linear
+from tools.models.conformer.modules import (
     FeedForwardModule,
     MultiHeadedSelfAttentionModule,
     ConformerConvModule,

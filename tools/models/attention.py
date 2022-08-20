@@ -18,7 +18,7 @@ import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
 
-from kospeech.models.activation import Swish
+from tools.models.activation import Swish
 
 
 class DepthwiseConv1d(nn.Module):

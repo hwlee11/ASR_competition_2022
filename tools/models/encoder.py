@@ -16,8 +16,8 @@ import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
 
-from kospeech.models.convolution import DeepSpeech2Extractor, VGGExtractor
-from kospeech.models.modules import Transpose, Linear
+from tools.models.convolution import DeepSpeech2Extractor, VGGExtractor
+from tools.models.modules import Transpose, Linear
 
 
 class EncoderInterface(nn.Module):

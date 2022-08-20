@@ -35,9 +35,9 @@ class ModelConfig:
 #from kospeech.models.las.model import ListenAttendSpell
 #from kospeech.models.transformer.model import SpeechTransformer
 #from kospeech.models.jasper.model import Jasper
-from kospeech.models.conformer.model import Conformer
+from tools.models.conformer.model import Conformer
 #from kospeech.models.las import ListenAttendSpellConfig, JointCTCAttentionLASConfig
 #from kospeech.models.transformer import TransformerConfig, JointCTCAttentionTransformerConfig
 #from kospeech.models.deepspeech2 import DeepSpeech2Config
 #from kospeech.models.jasper import JasperConfig
-from kospeech.models.conformer import ConformerSmallConfig, ConformerMediumConfig, ConformerLargeConfig
+from tools.models.conformer import ConformerSmallConfig, ConformerMediumConfig, ConformerLargeConfig
