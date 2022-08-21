@@ -14,9 +14,9 @@
 
 from torch import Tensor
 
-from kospeech.models.model import TransducerModel
-from kospeech.models.rnnt.decoder import DecoderRNNT
-from kospeech.models.rnnt.encoder import EncoderRNNT
+from tools.models.model import TransducerModel
+from tools.models.rnnt.decoder import DecoderRNNT
+from tools.models.rnnt.encoder import EncoderRNNT
 
 
 class RNNTransducer(TransducerModel):

@@ -1,4 +1,4 @@
-# Copyright (c) 2021, Soohwan Kim. All rights reserved.
+# Copyright (c) 2020, Soohwan Kim. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,448 +12,397 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import Tuple
 
-from tools.models.activation import Swish
+from kospeech.models import DecoderRNN
+from kospeech.models.decoder import BaseDecoder
+from kospeech.models.transformer.decoder import TransformerDecoder
 
 
-class DepthwiseConv1d(nn.Module):
-    """
-    When groups == in_channels and out_channels == K * in_channels, where K is a positive integer,
-    this operation is termed in literature as depthwise convolution.
+class BeamSearchBaseDecoder(nn.Module):
+    def __init__(self, decoder, beam_size: int, batch_size: int):
+        super(BeamSearchBaseDecoder, self).__init__()
+        self.decoder = decoder
+        self.beam_size = beam_size
+        self.sos_id = decoder.sos_id
+        self.pad_id = decoder.pad_id
+        self.eos_id = decoder.eos_id
+        self.ongoing_beams = None
+        self.cumulative_ps = None
+        self.finished = [[] for _ in range(batch_size)]
+        self.finished_ps = [[] for _ in range(batch_size)]
+        self.forward_step = decoder.forward_step
 
-    Args:
-        in_channels (int): Number of channels in the input
-        out_channels (int): Number of channels produced by the convolution
-        kernel_size (int or tuple): Size of the convolving kernel
-        stride (int, optional): Stride of the convolution. Default: 1
-        padding (int or tuple, optional): Zero-padding added to both sides of the input. Default: 0
-        bias (bool, optional): If True, adds a learnable bias to the output. Default: True
+    def _inflate(self, tensor: Tensor, n_repeat: int, dim: int) -> Tensor:
+        repeat_dims = [1] * len(tensor.size())
+        repeat_dims[dim] *= n_repeat
 
-    Inputs: inputs
-        - **inputs** (batch, in_channels, time): Tensor containing input vector
+        return tensor.repeat(*repeat_dims)
 
-    Returns: outputs
-        - **outputs** (batch, out_channels, time): Tensor produces by depthwise 1-D convolution.
-    """
-    def __init__(
+    def _get_successor(
             self,
-            in_channels: int,
-            out_channels: int,
-            kernel_size: int,
-            stride: int = 1,
-            padding: int = 0,
-            bias: bool = False,
-    ) -> None:
-        super(DepthwiseConv1d, self).__init__()
-        assert out_channels % in_channels == 0, "out_channels should be constant multiple of in_channels"
-        self.conv = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            groups=in_channels,
-            stride=stride,
-            padding=padding,
-            bias=bias,
-        )
+            current_ps: Tensor,
+            current_vs: Tensor,
+            finished_ids: tuple,
+            num_successor: int,
+            eos_count: int,
+            k: int
+    ) -> int:
+        finished_batch_idx, finished_idx = finished_ids
 
-    def forward(self, inputs: Tensor) -> Tensor:
-        return self.conv(inputs)
+        successor_ids = current_ps.topk(k + num_successor)[1]
+        successor_idx = successor_ids[finished_batch_idx, -1]
 
+        successor_p = current_ps[finished_batch_idx, successor_idx]
+        successor_v = current_vs[finished_batch_idx, successor_idx]
 
-class PointwiseConv1d(nn.Module):
-    """
-    When kernel size == 1 conv1d, this operation is termed in literature as pointwise convolution.
-    This operation often used to match dimensions.
+        prev_status_idx = (successor_idx // k)
+        prev_status = self.ongoing_beams[finished_batch_idx, prev_status_idx]
+        prev_status = prev_status.view(-1)[:-1]
 
-    Args:
-        in_channels (int): Number of channels in the input
-        out_channels (int): Number of channels produced by the convolution
-        stride (int, optional): Stride of the convolution. Default: 1
-        padding (int or tuple, optional): Zero-padding added to both sides of the input. Default: 0
-        bias (bool, optional): If True, adds a learnable bias to the output. Default: True
+        successor = torch.cat([prev_status, successor_v.view(1)])
 
-    Inputs: inputs
-        - **inputs** (batch, in_channels, time): Tensor containing input vector
-
-    Returns: outputs
-        - **outputs** (batch, out_channels, time): Tensor produces by pointwise 1-D convolution.
-    """
-    def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            stride: int = 1,
-            padding: int = 0,
-            bias: bool = True,
-    ) -> None:
-        super(PointwiseConv1d, self).__init__()
-        self.conv = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=1,
-            stride=stride,
-            padding=padding,
-            bias=bias,
-        )
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        return self.conv(inputs)
-
-
-class MaskConv1d(nn.Conv1d):
-    """
-    1D convolution with masking
-
-    Args:
-        in_channels (int): Number of channels in the input vector
-        out_channels (int): Number of channels produced by the convolution
-        kernel_size (int or tuple): Size of the convolving kernel
-        stride (int): Stride of the convolution. Default: 1
-        padding (int):  Zero-padding added to both sides of the input. Default: 0
-        dilation (int): Spacing between kernel elements. Default: 1
-        groups (int): Number of blocked connections from input channels to output channels. Default: 1
-        bias (bool): If True, adds a learnable bias to the output. Default: True
-
-    Inputs: inputs, seq_lengths
-        - **inputs** (torch.FloatTensor): The input of size (batch, dimension, time)
-        - **seq_lengths** (torch.IntTensor): The actual length of each sequence in the batch
-
-    Returns: output, seq_lengths
-        - **output**: Masked output from the conv1d
-        - **seq_lengths**: Sequence length of output from the conv1d
-    """
-    def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            kernel_size: int,
-            stride: int = 1,
-            padding: int = 0,
-            dilation: int = 1,
-            groups: int = 1,
-            bias: bool = False,
-    ) -> None:
-        super(MaskConv1d, self).__init__(in_channels=in_channels, out_channels=out_channels,
-                                         kernel_size=kernel_size, stride=stride, padding=padding,
-                                         dilation=dilation, groups=groups, bias=bias)
-
-    def _get_sequence_lengths(self, seq_lengths):
-        return (
-            (seq_lengths + 2 * self.padding[0] - self.dilation[0] * (self.kernel_size[0] - 1) - 1) // self.stride[0] + 1
-        )
-
-    def forward(self, inputs: Tensor, input_lengths: Tensor) -> Tuple[Tensor, Tensor]:
-        """
-        inputs: (batch, dimension, time)
-        input_lengths: (batch)
-        """
-        max_length = inputs.size(2)
-
-        indices = torch.arange(max_length).to(input_lengths.dtype).to(input_lengths.device)
-        indices = indices.expand(len(input_lengths), max_length)
-
-        mask = indices >= input_lengths.unsqueeze(1)
-        inputs = inputs.masked_fill(mask.unsqueeze(1).to(device=inputs.device), 0)
-
-        output_lengths = self._get_sequence_lengths(input_lengths)
-        output = super(MaskConv1d, self).forward(inputs)
-
-        del mask, indices
-
-        return output, output_lengths
-
-
-class MaskCNN(nn.Module):
-    """
-    Masking Convolutional Neural Network
-
-    Adds padding to the output of the module based on the given lengths.
-    This is to ensure that the results of the model do not change when batch sizes change during inference.
-    Input needs to be in the shape of (batch_size, channel, hidden_dim, seq_len)
-
-    Refer to https://github.com/SeanNaren/deepspeech.pytorch/blob/master/model.py
-    Copyright (c) 2017 Sean Naren
-    MIT License
-
-    Args:
-        sequential (torch.nn): sequential list of convolution layer
-
-    Inputs: inputs, seq_lengths
-        - **inputs** (torch.FloatTensor): The input of size BxCxHxT
-        - **seq_lengths** (torch.IntTensor): The actual length of each sequence in the batch
-
-    Returns: output, seq_lengths
-        - **output**: Masked output from the sequential
-        - **seq_lengths**: Sequence length of output from the sequential
-    """
-    def __init__(self, sequential: nn.Sequential) -> None:
-        super(MaskCNN, self).__init__()
-        self.sequential = sequential
-
-    def forward(self, inputs: Tensor, seq_lengths: Tensor) -> Tuple[Tensor, Tensor]:
-        output = None
-
-        for module in self.sequential:
-            output = module(inputs)
-            mask = torch.BoolTensor(output.size()).fill_(0)
-
-            if output.is_cuda:
-                mask = mask.cuda()
-
-            seq_lengths = self._get_sequence_lengths(module, seq_lengths)
-
-            for idx, length in enumerate(seq_lengths):
-                length = length.item()
-
-                if (mask[idx].size(2) - length) > 0:
-                    mask[idx].narrow(dim=2, start=length, length=mask[idx].size(2) - length).fill_(1)
-
-            output = output.masked_fill(mask, 0)
-            inputs = output
-
-        return output, seq_lengths
-
-    def _get_sequence_lengths(self, module: nn.Module, seq_lengths: Tensor) -> Tensor:
-        """
-        Calculate convolutional neural network receptive formula
-
-        Args:
-            module (torch.nn.Module): module of CNN
-            seq_lengths (torch.IntTensor): The actual length of each sequence in the batch
-
-        Returns: seq_lengths
-            - **seq_lengths**: Sequence length of output from the module
-        """
-        if isinstance(module, nn.Conv2d):
-            numerator = seq_lengths + 2 * module.padding[1] - module.dilation[1] * (module.kernel_size[1] - 1) - 1
-            seq_lengths = numerator.float() / float(module.stride[1])
-            seq_lengths = seq_lengths.int() + 1
-
-        elif isinstance(module, nn.MaxPool2d):
-            seq_lengths >>= 1
-
-        return seq_lengths.int()
-
-
-class Conv2dExtractor(nn.Module):
-    """
-    Provides inteface of convolutional extractor.
-
-    Note:
-        Do not use this class directly, use one of the sub classes.
-        Define the 'self.conv' class variable.
-
-    Inputs: inputs, input_lengths
-        - **inputs** (batch, time, dim): Tensor containing input vectors
-        - **input_lengths**: Tensor containing containing sequence lengths
-
-    Returns: outputs, output_lengths
-        - **outputs**: Tensor produced by the convolution
-        - **output_lengths**: Tensor containing sequence lengths produced by the convolution
-    """
-    supported_activations = {
-        'hardtanh': nn.Hardtanh(0, 20, inplace=True),
-        'relu': nn.ReLU(inplace=True),
-        'elu': nn.ELU(inplace=True),
-        'leaky_relu': nn.LeakyReLU(inplace=True),
-        'gelu': nn.GELU(),
-        'swish': Swish(),
-    }
-
-    def __init__(self, input_dim: int, activation: str = 'hardtanh') -> None:
-        super(Conv2dExtractor, self).__init__()
-        self.input_dim = input_dim
-        self.activation = Conv2dExtractor.supported_activations[activation]
-        self.conv = None
-
-    def get_output_lengths(self, seq_lengths: Tensor):
-        assert self.conv is not None, "self.conv should be defined"
-
-        for module in self.conv:
-            if isinstance(module, nn.Conv2d):
-                numerator = seq_lengths + 2 * module.padding[1] - module.dilation[1] * (module.kernel_size[1] - 1) - 1
-                seq_lengths = numerator.float() / float(module.stride[1])
-                seq_lengths = seq_lengths.int() + 1
-
-            elif isinstance(module, nn.MaxPool2d):
-                seq_lengths >>= 1
-
-        return seq_lengths.int()
-
-    def get_output_dim(self):
-        if isinstance(self, VGGExtractor):
-            output_dim = (self.input_dim - 1) << 5 if self.input_dim % 2 else self.input_dim << 5
-
-        elif isinstance(self, DeepSpeech2Extractor):
-            output_dim = int(math.floor(self.input_dim + 2 * 20 - 41) / 2 + 1)
-            output_dim = int(math.floor(output_dim + 2 * 10 - 21) / 2 + 1)
-            output_dim <<= 5
-
-        elif isinstance(self, Conv2dSubsampling):
-            factor = ((self.input_dim - 1) // 2 - 1) // 2
-            output_dim = self.out_channels * factor
+        if int(successor_v) == self.eos_id:
+            self.finished[finished_batch_idx].append(successor)
+            self.finished_ps[finished_batch_idx].append(successor_p)
+            eos_count = self._get_successor(
+                current_ps=current_ps,
+                current_vs=current_vs,
+                finished_ids=finished_ids,
+                num_successor=num_successor + eos_count,
+                eos_count=eos_count + 1,
+                k=k,
+            )
 
         else:
-            raise ValueError(f"Unsupported Extractor : {self.extractor}")
+            self.ongoing_beams[finished_batch_idx, finished_idx] = successor
+            self.cumulative_ps[finished_batch_idx, finished_idx] = successor_p
 
-        return output_dim
+        return eos_count
 
-    def forward(self, inputs: Tensor, input_lengths: Tensor) -> Tuple[Tensor, Tensor]:
-        """
-        inputs: torch.FloatTensor (batch, time, dimension)
-        input_lengths: torch.IntTensor (batch)
-        """
-        outputs, output_lengths = self.conv(inputs.unsqueeze(1).transpose(2, 3), input_lengths)
+    def _get_hypothesis(self):
+        predictions = list()
 
-        batch_size, channels, dimension, seq_lengths = outputs.size()
-        outputs = outputs.permute(0, 3, 1, 2)
-        outputs = outputs.view(batch_size, seq_lengths, channels * dimension)
+        for batch_idx, batch in enumerate(self.finished):
+            # if there is no terminated sentences, bring ongoing sentence which has the highest probability instead
+            if len(batch) == 0:
+                prob_batch = self.cumulative_ps[batch_idx]
+                top_beam_idx = int(prob_batch.topk(1)[1])
+                predictions.append(self.ongoing_beams[batch_idx, top_beam_idx])
 
-        return outputs, output_lengths
+            # bring highest probability sentence
+            else:
+                top_beam_idx = int(torch.FloatTensor(self.finished_ps[batch_idx]).topk(1)[1])
+                predictions.append(self.finished[batch_idx][top_beam_idx])
+
+        predictions = self._fill_sequence(predictions)
+        return predictions
+
+    def _is_all_finished(self, k: int) -> bool:
+        for done in self.finished:
+            if len(done) < k:
+                return False
+
+        return True
+
+    def _fill_sequence(self, y_hats: list) -> Tensor:
+        batch_size = len(y_hats)
+        max_length = -1
+
+        for y_hat in y_hats:
+            if len(y_hat) > max_length:
+                max_length = len(y_hat)
+
+        matched = torch.zeros((batch_size, max_length), dtype=torch.long)
+
+        for batch_idx, y_hat in enumerate(y_hats):
+            matched[batch_idx, :len(y_hat)] = y_hat
+            matched[batch_idx, len(y_hat):] = int(self.pad_id)
+
+        return matched
+
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
 
 
-class Conv2dSubsampling(Conv2dExtractor):
-    """
-    Convolutional 2D subsampling (to 1/4 length)
+class BeamDecoderRNN(BaseDecoder):
+    """ Beam Search Decoder RNN """
+    def __init__(self, decoder: DecoderRNN, beam_size: int, batch_size: int):
+        super(BeamDecoderRNN, self).__init__()
+        self.decoder = decoder
+        self.beam_size = beam_size
+        self.batch_size = batch_size
+        self.hidden_state_dim = decoder.hidden_state_dim
+        self.pad_id = decoder.pad_id
+        self.eos_id = decoder.eos_id
+        self.device = decoder.device
+        self.num_layers = decoder.num_layers
+        self.ongoing_beams = None
+        self.cumulative_ps = None
+        self.finished = [[] for _ in range(batch_size)]
+        self.finished_ps = [[] for _ in range(batch_size)]
+        self.validate_args = decoder.validate_args
+        self.forward_step = decoder.forward_step
+
+    def forward(self, encoder_outputs: Tensor) -> list:
+        return self.decoder.forward(targets=None, encoder_outputs=encoder_outputs, teacher_forcing_ratio=0.0)
+
+    @torch.no_grad()
+    def decode(self, encoder_outputs: Tensor, encoder_output_lengths: Tensor) -> Tensor:
+        """ Applies beam search decoing (Top k decoding) """
+        batch_size, hidden_states = encoder_outputs.size(0), None
+        inputs, batch_size, max_length = self.validate_args(None, encoder_outputs, teacher_forcing_ratio=0.0)
+
+        step_outputs, hidden_states, attn = self.forward_step(inputs, hidden_states, encoder_outputs)
+        self.cumulative_ps, self.ongoing_beams = step_outputs.topk(self.beam_size)
+
+        self.ongoing_beams = self.ongoing_beams.view(batch_size * self.beam_size, 1)
+        self.cumulative_ps = self.cumulative_ps.view(batch_size * self.beam_size, 1)
+
+        input_var = self.ongoing_beams
+
+        encoder_dim = encoder_outputs.size(2)
+        encoder_outputs = self._inflate(encoder_outputs, self.beam_size, dim=0)
+        encoder_outputs = encoder_outputs.view(self.beam_size, batch_size, -1, encoder_dim)
+        encoder_outputs = encoder_outputs.transpose(0, 1)
+        encoder_outputs = encoder_outputs.reshape(batch_size * self.beam_size, -1, encoder_dim)
+        
+        if attn is not None:
+            attn = self._inflate(attn, self.beam_size, dim=0)
+        
+        if isinstance(hidden_states, tuple):
+            hidden_states = tuple([self._inflate(h, self.beam_size, 1) for h in hidden_states])
+        else:
+            hidden_states = self._inflate(hidden_states, self.beam_size, 1)
+
+        for di in range(max_length - 1):
+            if self._is_all_finished(self.beam_size):
+                break
+
+            hidden_states = hidden_states.view(self.num_layers, batch_size * self.beam_size, self.hidden_state_dim)
+            step_outputs, hidden_states, attn = self.forward_step(input_var, hidden_states, encoder_outputs, attn)
+
+            step_outputs = step_outputs.view(batch_size, self.beam_size, -1)
+            current_ps, current_vs = step_outputs.topk(self.beam_size)
+
+            self.cumulative_ps = self.cumulative_ps.view(batch_size, self.beam_size)
+            self.ongoing_beams = self.ongoing_beams.view(batch_size, self.beam_size, -1)
+
+            current_ps = (current_ps.permute(0, 2, 1) + self.cumulative_ps.unsqueeze(1)).permute(0, 2, 1)
+            current_ps = current_ps.view(batch_size, self.beam_size ** 2)
+            current_vs = current_vs.view(batch_size, self.beam_size ** 2)
+
+            self.cumulative_ps = self.cumulative_ps.view(batch_size, self.beam_size)
+            self.ongoing_beams = self.ongoing_beams.view(batch_size, self.beam_size, -1)
+
+            topk_current_ps, topk_status_ids = current_ps.topk(self.beam_size)
+            prev_status_ids = (topk_status_ids // self.beam_size)
+
+            topk_current_vs = torch.zeros((batch_size, self.beam_size), dtype=torch.long)
+            prev_status = torch.zeros(self.ongoing_beams.size(), dtype=torch.long)
+
+            for batch_idx, batch in enumerate(topk_status_ids):
+                for idx, topk_status_idx in enumerate(batch):
+                    topk_current_vs[batch_idx, idx] = current_vs[batch_idx, topk_status_idx]
+                    prev_status[batch_idx, idx] = self.ongoing_beams[batch_idx, prev_status_ids[batch_idx, idx]]
+
+            self.ongoing_beams = torch.cat([prev_status, topk_current_vs.unsqueeze(2)], dim=2).to(self.device)
+            self.cumulative_ps = topk_current_ps.to(self.device)
+
+            if torch.any(topk_current_vs == self.eos_id):
+                finished_ids = torch.where(topk_current_vs == self.eos_id)
+                num_successors = [1] * batch_size
+
+                for (batch_idx, idx) in zip(*finished_ids):
+                    self.finished[batch_idx].append(self.ongoing_beams[batch_idx, idx])
+                    self.finished_ps[batch_idx].append(self.cumulative_ps[batch_idx, idx])
+
+                    if self.beam_size != 1:
+                        eos_count = self._get_successor(
+                            current_ps=current_ps,
+                            current_vs=current_vs,
+                            finished_ids=(batch_idx, idx),
+                            num_successor=num_successors[batch_idx],
+                            eos_count=1,
+                            k=self.beam_size,
+                        )
+                        num_successors[batch_idx] += eos_count
+
+            input_var = self.ongoing_beams[:, :, -1]
+            input_var = input_var.view(batch_size * self.beam_size, -1)
+
+        predictions = self._get_hypothesis()
+        predictions = torch.stack(predictions, dim=1)
+        return predictions
+
+
+class BeamTransformerDecoder(BeamSearchBaseDecoder):
+    def __init__(self, decoder: TransformerDecoder, batch_size: int, beam_size: int = 3) -> None:
+        super(BeamTransformerDecoder, self).__init__(decoder, beam_size, batch_size)
+        self.use_cuda = True if torch.cuda.is_available() else False
+
+    @torch.no_grad()
+    def decode(self, encoder_outputs: torch.FloatTensor, encoder_output_lengths: torch.FloatTensor):
+        batch_size = encoder_outputs.size(0)
+
+        decoder_inputs = torch.IntTensor(batch_size, self.decoder.max_length).fill_(self.sos_id).long()
+        decoder_input_lengths = torch.IntTensor(batch_size).fill_(1)
+
+        outputs = self.forward_step(
+            decoder_inputs=decoder_inputs[:, :1],
+            decoder_input_lengths=decoder_input_lengths,
+            encoder_outputs=encoder_outputs,
+            encoder_output_lengths=encoder_output_lengths,
+            positional_encoding_length=1,
+        )
+        step_outputs = self.decoder.fc(outputs).log_softmax(dim=-1)
+        self.cumulative_ps, self.ongoing_beams = step_outputs.topk(self.beam_size)
+
+        self.ongoing_beams = self.ongoing_beams.view(batch_size * self.beam_size, 1)
+        self.cumulative_ps = self.cumulative_ps.view(batch_size * self.beam_size, 1)
+
+        decoder_inputs = torch.IntTensor(batch_size * self.beam_size, 1).fill_(self.sos_id)
+        decoder_inputs = torch.cat((decoder_inputs, self.ongoing_beams), dim=-1)  # bsz * beam x 2
+
+        encoder_dim = encoder_outputs.size(2)
+        encoder_outputs = self._inflate(encoder_outputs, self.beam_size, dim=0)
+        encoder_outputs = encoder_outputs.view(self.beam_size, batch_size, -1, encoder_dim)
+        encoder_outputs = encoder_outputs.transpose(0, 1)
+        encoder_outputs = encoder_outputs.reshape(batch_size * self.beam_size, -1, encoder_dim)
+
+        encoder_output_lengths = encoder_output_lengths.unsqueeze(1).repeat(1, self.beam_size).view(-1)
+
+        for di in range(2, self.decoder.max_length):
+            if self._is_all_finished(self.beam_size):
+                break
+
+            decoder_input_lengths = torch.LongTensor(batch_size * self.beam_size).fill_(di)
+
+            step_outputs = self.forward_step(
+                decoder_inputs=decoder_inputs[:, :di],
+                decoder_input_lengths=decoder_input_lengths,
+                encoder_outputs=encoder_outputs,
+                encoder_output_lengths=encoder_output_lengths,
+                positional_encoding_length=di,
+            )
+            step_outputs = self.decoder.fc(step_outputs).log_softmax(dim=-1)
+
+            step_outputs = step_outputs.view(batch_size, self.beam_size, -1, 10)
+            current_ps, current_vs = step_outputs.topk(self.beam_size)
+
+            # TODO: Check transformer's beam search
+            current_ps = current_ps[:, :, -1, :]
+            current_vs = current_vs[:, :, -1, :]
+
+            self.cumulative_ps = self.cumulative_ps.view(batch_size, self.beam_size)
+            self.ongoing_beams = self.ongoing_beams.view(batch_size, self.beam_size, -1)
+
+            current_ps = (current_ps.permute(0, 2, 1) + self.cumulative_ps.unsqueeze(1)).permute(0, 2, 1)
+            current_ps = current_ps.view(batch_size, self.beam_size ** 2)
+            current_vs = current_vs.contiguous().view(batch_size, self.beam_size ** 2)
+
+            self.cumulative_ps = self.cumulative_ps.view(batch_size, self.beam_size)
+            self.ongoing_beams = self.ongoing_beams.view(batch_size, self.beam_size, -1)
+
+            topk_current_ps, topk_status_ids = current_ps.topk(self.beam_size)
+            prev_status_ids = (topk_status_ids // self.beam_size)
+
+            topk_current_vs = torch.zeros((batch_size, self.beam_size), dtype=torch.long)
+            prev_status = torch.zeros(self.ongoing_beams.size(), dtype=torch.long)
+
+            for batch_idx, batch in enumerate(topk_status_ids):
+                for idx, topk_status_idx in enumerate(batch):
+                    topk_current_vs[batch_idx, idx] = current_vs[batch_idx, topk_status_idx]
+                    prev_status[batch_idx, idx] = self.ongoing_beams[batch_idx, prev_status_ids[batch_idx, idx]]
+
+            self.ongoing_beams = torch.cat([prev_status, topk_current_vs.unsqueeze(2)], dim=2)
+            self.cumulative_ps = topk_current_ps
+
+            if torch.any(topk_current_vs == self.eos_id):
+                finished_ids = torch.where(topk_current_vs == self.eos_id)
+                num_successors = [1] * batch_size
+
+                for (batch_idx, idx) in zip(*finished_ids):
+                    self.finished[batch_idx].append(self.ongoing_beams[batch_idx, idx])
+                    self.finished_ps[batch_idx].append(self.cumulative_ps[batch_idx, idx])
+
+                    if self.beam_size != 1:
+                        eos_count = self._get_successor(
+                            current_ps=current_ps,
+                            current_vs=current_vs,
+                            finished_ids=(batch_idx, idx),
+                            num_successor=num_successors[batch_idx],
+                            eos_count=1,
+                            k=self.beam_size,
+                        )
+                        num_successors[batch_idx] += eos_count
+
+            ongoing_beams = self.ongoing_beams.clone().view(batch_size * self.beam_size, -1)
+            decoder_inputs = torch.cat((decoder_inputs, ongoing_beams[:, :-1]), dim=-1)
+
+        return self._get_hypothesis()
+
+
+class BeamCTCDecoder(nn.Module):
+    r"""
+    Decodes probability output using ctcdecode package.
 
     Args:
-        input_dim (int): Dimension of input vector
-        in_channels (int): Number of channels in the input vector
-        out_channels (int): Number of channels produced by the convolution
-        activation (str): Activation function
+        labels (list): the tokens you used to train your model
+        lm_path (str): the path to your external kenlm language model(LM).
+        alpha (int): weighting associated with the LMs probabilities.
+        beta (int): weight associated with the number of words within our beam
+        cutoff_top_n (int): cutoff number in pruning. Only the top cutoff_top_n characters with the highest probability
+            in the vocab will be used in beam search.
+        cutoff_prob (float): cutoff probability in pruning. 1.0 means no pruning.
+        beam_size (int): this controls how broad the beam search is.
+        num_processes (int): parallelize the batch using num_processes workers.
+        blank_id (int): this should be the index of the CTC blank token
 
-    Inputs: inputs
-        - **inputs** (batch, time, dim): Tensor containing sequence of inputs
-        - **input_lengths** (batch): list of sequence input lengths
+    Inputs:
+        predicted_probs: Tensor of character probabilities, where probs[c,t] is the probability of
+            character c at time t
+        sizes: Size of each sequence in the mini-batch
 
-    Returns: outputs, output_lengths
-        - **outputs** (batch, time, dim): Tensor produced by the convolution
-        - **output_lengths** (batch): list of sequence output lengths
+    Returns:
+        outputs: sequences of the model's best prediction
     """
     def __init__(
             self,
-            input_dim: int,
-            in_channels: int,
-            out_channels: int,
-            activation: str = 'relu',
+            labels: list,
+            lm_path: str = None,
+            alpha: int = 0,
+            beta: int = 0,
+            cutoff_top_n: int = 40,
+            cutoff_prob: float = 1.0,
+            beam_size: int = 3,
+            num_processes: int = 4,
+            blank_id: int = 0,
     ) -> None:
-        super(Conv2dSubsampling, self).__init__(input_dim, activation)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.conv = MaskCNN(
-            nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2),
-                self.activation,
-                nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=2),
-                self.activation,
-            )
-        )
+        super(BeamCTCDecoder, self).__init__()
+        try:
+            from ctcdecode import CTCBeamDecoder
+        except ImportError:
+            raise ImportError("BeamCTCDecoder requires paddledecoder package.")
+        assert isinstance(labels, list), "labels must instance of list"
+        self.decoder = CTCBeamDecoder(labels, lm_path, alpha, beta, cutoff_top_n,
+                                      cutoff_prob, beam_size, num_processes, blank_id)
 
-    def forward(self, inputs: Tensor, input_lengths: Tensor) -> Tuple[Tensor, Tensor]:
-        outputs, input_lengths = super().forward(inputs, input_lengths)
-        output_lengths = input_lengths >> 2
-        output_lengths -= 1
-        return outputs, output_lengths
+    @torch.no_grad()
+    def decode(self, logits, sizes=None):
+        r"""
+        Decodes probability output using ctcdecode package.
 
+        Inputs:
+            logits: Tensor of character probabilities, where probs[c,t] is the probability of
+                character c at time t
+            sizes: Size of each sequence in the mini-batch
 
-class DeepSpeech2Extractor(Conv2dExtractor):
-    """
-    DeepSpeech2 extractor for automatic speech recognition described in
-    "Deep Speech 2: End-to-End Speech Recognition in English and Mandarin" paper
-    - https://arxiv.org/abs/1512.02595
-
-    Args:
-        input_dim (int): Dimension of input vector
-        in_channels (int): Number of channels in the input vector
-        out_channels (int): Number of channels produced by the convolution
-        activation (str): Activation function
-
-    Inputs: inputs, input_lengths
-        - **inputs** (batch, time, dim): Tensor containing input vectors
-        - **input_lengths**: Tensor containing containing sequence lengths
-
-    Returns: outputs, output_lengths
-        - **outputs**: Tensor produced by the convolution
-        - **output_lengths**: Tensor containing sequence lengths produced by the convolution
-    """
-    def __init__(
-            self,
-            input_dim: int,
-            in_channels: int = 1,
-            out_channels: int = 32,
-            activation: str = 'hardtanh',
-    ) -> None:
-        super(DeepSpeech2Extractor, self).__init__(input_dim=input_dim, activation=activation)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.conv = MaskCNN(
-            nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=(41, 11), stride=(2, 2), padding=(20, 5), bias=False),
-                nn.BatchNorm2d(out_channels),
-                self.activation,
-                nn.Conv2d(out_channels, out_channels, kernel_size=(21, 11), stride=(2, 1), padding=(10, 5), bias=False),
-                nn.BatchNorm2d(out_channels),
-                self.activation,
-            )
-        )
-
-    def forward(self, inputs: Tensor, input_lengths: Tensor) -> Tuple[Tensor, Tensor]:
-        return super().forward(inputs, input_lengths)
-
-
-class VGGExtractor(Conv2dExtractor):
-    """
-    VGG extractor for automatic speech recognition described in
-    "Advances in Joint CTC-Attention based End-to-End Speech Recognition with a Deep CNN Encoder and RNN-LM" paper
-    - https://arxiv.org/pdf/1706.02737.pdf
-
-    Args:
-        input_dim (int): Dimension of input vector
-        in_channels (int): Number of channels in the input image
-        out_channels (int or tuple): Number of channels produced by the convolution
-        activation (str): Activation function
-
-    Inputs: inputs, input_lengths
-        - **inputs** (batch, time, dim): Tensor containing input vectors
-        - **input_lengths**: Tensor containing containing sequence lengths
-
-    Returns: outputs, output_lengths
-        - **outputs**: Tensor produced by the convolution
-        - **output_lengths**: Tensor containing sequence lengths produced by the convolution
-    """
-    def __init__(
-            self,
-            input_dim: int,
-            in_channels: int = 1,
-            out_channels: int or tuple = (64, 128),
-            activation: str = 'hardtanh',
-    ):
-        super(VGGExtractor, self).__init__(input_dim=input_dim, activation=activation)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.conv = MaskCNN(
-            nn.Sequential(
-                nn.Conv2d(in_channels, out_channels[0], kernel_size=3, stride=1, padding=1, bias=False),
-                nn.BatchNorm2d(num_features=out_channels[0]),
-                self.activation,
-                nn.Conv2d(out_channels[0], out_channels[0], kernel_size=3, stride=1, padding=1, bias=False),
-                nn.BatchNorm2d(num_features=out_channels[0]),
-                self.activation,
-                nn.MaxPool2d(2, stride=2),
-                nn.Conv2d(out_channels[0], out_channels[1], kernel_size=3, stride=1, padding=1, bias=False),
-                nn.BatchNorm2d(num_features=out_channels[1]),
-                self.activation,
-                nn.Conv2d(out_channels[1], out_channels[1], kernel_size=3, stride=1, padding=1, bias=False),
-                nn.BatchNorm2d(num_features=out_channels[1]),
-                self.activation,
-                nn.MaxPool2d(2, stride=2),
-            )
-        )
-
-    def forward(self, inputs: Tensor, input_lengths: Tensor) -> Tuple[Tensor, Tensor]:
-        return super().forward(inputs, input_lengths)
+        Returns:
+            outputs: sequences of the model's best prediction
+        """
+        logits = logits.cpu()
+        outputs, scores, offsets, seq_lens = self.decoder.decode(logits, sizes)
+        return outputs

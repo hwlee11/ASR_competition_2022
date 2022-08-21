@@ -9,24 +9,24 @@ import torch.nn.init as init
 
 from astropy.modeling import ParameterError
 from tools.vocab import Vocabulary
-from tools.models.conformer import Comformer
+from tools.models.conformer import Conformer
 
 def build_conformer(
         config,
         vocab: Vocabulary,
         device: torch.device,
 ) -> nn.DataParallel:
-    if input_dropout_p < 0.0:
+    if config.input_dropout_p < 0.0:
         raise ParameterError("dropout probability should be positive")
-    if feed_forward_dropout_p < 0.0:
+    if config.feed_forward_dropout_p < 0.0:
         raise ParameterError("dropout probability should be positive")
-    if attention_dropout_p < 0.0:
+    if config.attention_dropout_p < 0.0:
         raise ParameterError("dropout probability should be positive")
-    if conv_dropout_p < 0.0:
+    if config.conv_dropout_p < 0.0:
         raise ParameterError("dropout probability should be positive")
-    if input_size < 0:
+    if config.n_mels < 0:
         raise ParameterError("input_size should be greater than 0")
-    assert conv_expansion_factor == 2, "currently, conformer conv expansion factor only supports 2"
+    assert config.conv_expansion_factor == 2, "currently, conformer conv expansion factor only supports 2"
 
     return nn.DataParallel(Conformer(
         num_classes=len(vocab),

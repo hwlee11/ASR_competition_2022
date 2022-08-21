@@ -1,6 +1,7 @@
 import torch
 import queue
 import os
+import math
 import random
 import warnings
 import time
@@ -97,15 +98,18 @@ if __name__ == '__main__':
     args.add_argument('--num_threads', type=int, default=16)
     args.add_argument('--init_lr', type=float, default=1e-06)
     args.add_argument('--final_lr', type=float, default=1e-07)
-    args.add_argument('--peak_lr', type=float, default=1e-04)
-    #args.add_argument('--peak_lr', type=float, default= 0.05/math.sqrt(512))
+    #args.add_argument('--peak_lr', type=float, default=1e-04)
+    args.add_argument('--peak_lr', type=float, default= 0.025/math.sqrt(512))
     args.add_argument('--init_lr_scale', type=float, default=1e-02)
-    args.add_argument('--final_lr_scale', type=float, default=0.05)
+    args.add_argument('--final_lr_scale', type=float, default=0.001)
     args.add_argument('--max_grad_norm', type=int, default=400)
-    args.add_argument('--warmup_steps', type=int, default=1000)
+    args.add_argument('--warmup_steps', type=int, default=10000)
+    args.add_argument('--decay_steps', type=int, default=80000)
     args.add_argument('--weight_decay', type=float, default=1e-06)
     args.add_argument('--reduction', type=str, default='mean')
     args.add_argument('--optimizer', type=str, default='adam')
+    args.add_argument('--optimizer_betas', type=tuple, default=(0.9,0.98))
+    args.add_argument('--optimizer_eps', type=float, default=1e-9)
     args.add_argument('--lr_scheduler', type=str, default='transformer_lr_scheduler')
     #args.add_argument('--lr_scheduler', type=str, default='tri_stage_lr_scheduler')
     args.add_argument('--total_steps', type=int, default=200000)
@@ -113,7 +117,7 @@ if __name__ == '__main__':
     args.add_argument('--architecture', type=str, default='conformer')
     args.add_argument('--use_bidirectional', type=bool, default=True)
     args.add_argument('--dropout', type=float, default=3e-01)
-    args.add_argument('--num_encoder_layers', type=int, default=3)
+    #args.add_argument('--num_encoder_layers', type=int, default=3)
     args.add_argument('--hidden_dim', type=int, default=1024)
     args.add_argument('--rnn_type', type=str, default='gru')
     args.add_argument('--max_len', type=int, default=400)
@@ -124,27 +128,29 @@ if __name__ == '__main__':
     args.add_argument('--joint_ctc_attention', type=bool, default=False)
 
     #args.add_argument('--',default=)
-    args.add_argument('--encoder_dim',dtype=int,default=512)
-    args.add_argument('--decoder_dim',dtype=int,default=640)
-    args.add_argument('--num_encoder_layers',dtype=int,default=17)
-    args.add_argument('--num_decoder_layers',dtype=int,default=1)
-    args.add_argument('--decoder_rnn_type',dtype=str,default="lstm")
-    args.add_argument('--num_attention_heads',dtype=int,default=8)
-    args.add_argument('--feed_forward_expansion_factor',dtype=int,default=4)
-    args.add_argument('--conv_expansion_factor',dtype=int,default=2)
-    args.add_argument('--input_dropout_p',dtype=float,default=0.1)
-    args.add_argument('--attention_dropout_p',dtype=float,default=0.1)
-    args.add_argument('--conv_dropout_p',dtype=float,default=0.1)
-    args.add_argument('--decoder_dropout_p',dtype=float,default=0.1)
-    args.add_argument('--conv_kernel_size',dtype=int,default=31)
-    args.add_argument('--half_step_residual',dtype=str,default=True)
-    args.add_argument('--decoder',dtype=str,default="None")
+    args.add_argument('--encoder_dim',type=int,default=512)
+    args.add_argument('--decoder_dim',type=int,default=640)
+    args.add_argument('--num_encoder_layers',type=int,default=17)
+    args.add_argument('--num_decoder_layers',type=int,default=1)
+    args.add_argument('--decoder_rnn_type',type=str,default="lstm")
+    args.add_argument('--num_attention_heads',type=int,default=8)
+    args.add_argument('--feed_forward_expansion_factor',type=int,default=4)
+    args.add_argument('--conv_expansion_factor',type=int,default=2)
+    args.add_argument('--input_dropout_p',type=float,default=0.1)
+    args.add_argument('--attention_dropout_p',type=float,default=0.1)
+    args.add_argument('--conv_dropout_p',type=float,default=0.1)
+    args.add_argument('--decoder_dropout_p',type=float,default=0.1)
+    args.add_argument('--feed_forward_dropout_p',type=float,default=0.1)
+    args.add_argument('--conv_kernel_size',type=int,default=31)
+    args.add_argument('--half_step_residual',type=str,default=True)
+    args.add_argument('--decoder',type=str,default="rnnt")
+    #args.add_argument('--decoder',type=str,default="None")
 
     args.add_argument('--audio_extension', type=str, default='pcm')
     args.add_argument('--transform_method', type=str, default='fbank')
     args.add_argument('--feature_extract_by', type=str, default='kaldi')
     args.add_argument('--sample_rate', type=int, default=16000)
-    args.add_argument('--frame_length', type=int, default=20)
+    args.add_argument('--frame_length', type=int, default=25)
     args.add_argument('--frame_shift', type=int, default=10)
     args.add_argument('--n_mels', type=int, default=80)
     args.add_argument('--freq_mask_para', type=int, default=18)
@@ -161,7 +167,7 @@ if __name__ == '__main__':
     random.seed(config.seed)
     torch.manual_seed(config.seed)
     torch.cuda.manual_seed_all(config.seed)
-    device = 'cuda:1' if config.use_cuda == True else 'cpu'
+    device = 'cuda' if config.use_cuda == True else 'cpu'
     if hasattr(config, "num_threads") and int(config.num_threads) > 0:
         torch.set_num_threads(config.num_threads)
 
@@ -187,6 +193,7 @@ if __name__ == '__main__':
         preprocessing(label_path, os.getcwd())
         train_dataset, valid_dataset = split_dataset(config, os.path.join(os.getcwd(), 'transcripts.txt'), vocab)
 
+        #epoch_time_steps = int(len(train_dataset)/config.batch_size)
         lr_scheduler = get_lr_scheduler(config, optimizer, len(train_dataset))
         optimizer = Optimizer(optimizer, lr_scheduler, int(len(train_dataset)*config.num_epochs), config.max_grad_norm)
         criterion = get_criterion(config, vocab)
