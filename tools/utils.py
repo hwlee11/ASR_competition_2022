@@ -7,6 +7,7 @@ from torch.optim.optimizer import Optimizer
 from torch import optim
 
 from tools.vocab import Vocabulary
+from tools.criterion import TransducerLoss
 
 
 class LearningRateScheduler(object):
@@ -236,6 +237,9 @@ def get_optimizer(model: nn.Module, config):
 
 def get_criterion(config, vocab: Vocabulary) -> nn.Module:
 
-    criterion = nn.CTCLoss(blank=vocab.blank_id, reduction=config.reduction, zero_infinity=True)
+    if config.decoder is None:
+        criterion = nn.CTCLoss(blank=vocab.blank_id, reduction=config.reduction, zero_infinity=True)
+    elif config.decoder == 'rnnt':
+        criterion = TransducerLoss(blank_id=vocab.bland_id)
 
     return criterion

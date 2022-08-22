@@ -25,14 +25,24 @@ def trainer(mode, config, dataloader, optimizer, model, criterion, metric, train
         target_lengths = torch.as_tensor(target_lengths).to(device)
         model = model.to(device)
 
-        outputs, output_lengths = model(inputs, input_lengths,targets,target_lengths)
+        if config.decoder is None:
+            outputs, output_lengths = model(inputs, input_lengths,targets,target_lengths)
+            loss = criterion(
+                outputs.transpose(0, 1),
+                targets[:, 1:],
+                tuple(output_lengths),
+                tuple(target_lengths)
+            )
 
-        loss = criterion(
-            outputs.transpose(0, 1),
-            targets[:, 1:],
-            tuple(output_lengths),
-            tuple(target_lengths)
-        )
+        elif config.decoder == 'rnnt':
+            outputs = model(inputs, input_lengths,targets,target_lengths)
+            loss = criterion(
+                outputs.transpose(0, 1),
+                targets[:, 1:],
+                tuple(input_lengths),
+                tuple(target_lengths)
+            )
+
 
         y_hats = outputs.max(-1)[1]
 
