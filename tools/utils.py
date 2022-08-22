@@ -240,6 +240,6 @@ def get_criterion(config, vocab: Vocabulary) -> nn.Module:
     if config.decoder is None:
         criterion = nn.CTCLoss(blank=vocab.blank_id, reduction=config.reduction, zero_infinity=True)
     elif config.decoder == 'rnnt':
-        criterion = TransducerLoss(blank_id=vocab.bland_id)
+        criterion = TransducerLoss(blank_id=vocab.blank_id)
 
     return criterion

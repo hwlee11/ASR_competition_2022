@@ -171,6 +171,7 @@ if __name__ == '__main__':
     if hasattr(config, "num_threads") and int(config.num_threads) > 0:
         torch.set_num_threads(config.num_threads)
 
+    #wmpVocabulary(os.path.join(os.getcwd(),'transcripts.txt'))
     vocab = KoreanSpeechVocabulary(os.path.join(os.getcwd(), 'labels.csv'), output_unit='character')
 
     if config.architecture == 'deepspeech2':
