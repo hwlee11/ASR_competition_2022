@@ -118,7 +118,7 @@ if __name__ == '__main__':
     args.add_argument('--use_bidirectional', type=bool, default=True)
     args.add_argument('--dropout', type=float, default=3e-01)
     #args.add_argument('--num_encoder_layers', type=int, default=3)
-    args.add_argument('--hidden_dim', type=int, default=1024)
+    args.add_argument('--hidden_dim', type=int, default=512)
     args.add_argument('--rnn_type', type=str, default='gru')
     args.add_argument('--max_len', type=int, default=400)
     args.add_argument('--activation', type=str, default='hardtanh')

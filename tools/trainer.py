@@ -25,6 +25,7 @@ def trainer(mode, config, dataloader, optimizer, model, criterion, metric, train
         target_lengths = torch.as_tensor(target_lengths).to(device)
         model = model.to(device)
 
+
         if config.decoder is None:
             outputs, output_lengths = model(inputs, input_lengths,targets,target_lengths)
             loss = criterion(
@@ -37,17 +38,18 @@ def trainer(mode, config, dataloader, optimizer, model, criterion, metric, train
         elif config.decoder == 'rnnt':
             outputs = model(inputs, input_lengths,targets,target_lengths)
             loss = criterion(
-                outputs.transpose(0, 1),
-                targets[:, 1:],
-                tuple(input_lengths),
-                tuple(target_lengths)
+                outputs,
+                targets[:, 1:].contiguous().int(),
+                #targets[:, 1:].transpose(0, 1).contiguous().int(),
+                input_lengths.int(),
+                target_lengths.int()
             )
 
 
-        y_hats = outputs.max(-1)[1]
+        #y_hats = outputs.max(-1)[1]
 
         if mode == 'train':
-            optimizer.zero_grad()
+            #optimizer.zero_grad()
             loss.backward()
             optimizer.step(model)
 
