@@ -182,13 +182,23 @@ class TransducerModel(BaseModel):
             self,
             encoder: TransducerEncoder,
             decoder: TransducerDecoder,
-            d_model: int,
+            encoderDim: int,
+            decoderDim: int,
+            jointSpaceDim: int,
             num_classes: int,
     ) -> None:
         super(TransducerModel, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.fc = Linear(d_model << 1, num_classes, bias=False)
+        self.decoderDim = decoderDim
+
+        #self.fc = Linear(d_model << 1, num_classes, bias=False)
+        self.lin_enc = torch.nn.Linear(encoderDim, jointSpaceDim)
+        self.lin_dec = torch.nn.Linear(decoderDim, jointSpaceDim, bias=False)
+
+        self.lin_out = torch.nn.Linear(jointSpaceDim, num_classes)
+
+        self.jointActivation = torch.nn.Tanh()
 
     def set_encoder(self, encoder):
         """ Setter for encoder """
@@ -222,7 +232,6 @@ class TransducerModel(BaseModel):
         Returns:
             * outputs (torch.FloatTensor): outputs of joint `encoder_outputs` and `decoder_outputs`..
         """
-        #print(encoder_outputs.dim() ,decoder_outputs.dim())
         if encoder_outputs.dim() == 3 and decoder_outputs.dim() == 3:
             input_length = encoder_outputs.size(1)
             target_length = decoder_outputs.size(1)
@@ -230,15 +239,16 @@ class TransducerModel(BaseModel):
             encoder_outputs = encoder_outputs.unsqueeze(2)
             decoder_outputs = decoder_outputs.unsqueeze(1)
 
-            encoder_outputs = encoder_outputs.repeat([1, 1, target_length, 1])
-            decoder_outputs = decoder_outputs.repeat([1, input_length, 1, 1])
+        print(decoder_outputs.size())
+        print(self.decoderDim)
 
-        #print(encoder_outputs.size() ,decoder_outputs.size())
-        outputs = torch.cat((encoder_outputs, decoder_outputs), dim=-1)
-        #print(outputs.size())
-        outputs = self.fc(outputs).log_softmax(dim=-1)
+        enc_out = self.lin_enc(encoder_outputs)
+        dec_out = self.lin_dec(decoder_outputs)
 
-        return outputs
+        #jointOut = self.jointActivation(self.lin_enc(encoder_outputs) + self.lin_dec(decoder_outputs))
+        jointOut = self.jointActivation(enc_out + dec_out)
+
+        return self.lin_out(jointOut)
 
     def forward(
             self,

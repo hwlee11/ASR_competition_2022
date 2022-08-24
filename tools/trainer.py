@@ -3,7 +3,7 @@ import numpy as np
 import math
 from dataclasses import dataclass
 import time
-from nsml import DATASET_PATH
+#from nsml import DATASET_PATH
 
 
 def trainer(mode, config, dataloader, optimizer, model, criterion, metric, train_begin_time, device):
@@ -30,7 +30,6 @@ def trainer(mode, config, dataloader, optimizer, model, criterion, metric, train
         input_lengths = input_lengths.to(device)
         target_lengths = torch.as_tensor(target_lengths).to(device)
         model = model.to(device)
-
 
         if mode == 'train':
             if config.decoder is None:
