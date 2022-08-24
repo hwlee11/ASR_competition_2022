@@ -102,7 +102,8 @@ class Conformer(TransducerModel):
             )
         else:
             decoder = None
-        super(Conformer, self).__init__(encoder, decoder, encoder_dim >> 1, num_classes)
+        #super(Conformer, self).__init__(encoder, decoder, encoder_dim >> 1, num_classes)
+        super(Conformer, self).__init__(encoder, decoder, encoder_dim , num_classes)
 
     def forward(
             self,

@@ -254,7 +254,7 @@ if __name__ == '__main__':
                 num_workers=config.num_workers
             )
 
-            model, valid_loss, valid_cer = trainer(
+            model, valid_cer = trainer(
                 'valid',
                 config,
                 valid_loader,
@@ -266,14 +266,15 @@ if __name__ == '__main__':
                 device
             )
 
-            print('[INFO] Epoch %d (Validation) Loss %0.4f  CER %0.4f' % (epoch, valid_loss, valid_cer))
+            #print('[INFO] Epoch %d (Validation) Loss %0.4f  CER %0.4f' % (epoch, valid_loss, valid_cer))
+            print('[INFO] Epoch %d (Validation) Loss %0.4f  CER %0.4f' % (epoch, valid_cer))
 
             nsml.report(
                 summary=True,
                 epoch=epoch,
                 train_loss=train_loss,
                 train_cer=train_cer,
-                val_loss=valid_loss,
+                #val_loss=valid_loss,
                 val_cer=valid_cer
             )
 
