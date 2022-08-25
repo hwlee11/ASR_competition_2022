@@ -29,6 +29,7 @@ class TransducerLoss(nn.Module):
         super().__init__()
         try:
             from warp_rnnt import rnnt_loss
+            #from warprnnt_pytorch import RNNTLoss
         except ImportError:
             raise ImportError("warp-rnnt is not installed. Please re-setup")
         self.rnnt_loss = rnnt_loss

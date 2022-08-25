@@ -182,13 +182,21 @@ class TransducerModel(BaseModel):
             self,
             encoder: TransducerEncoder,
             decoder: TransducerDecoder,
-            d_model: int,
+            encoderDim: int,
+            decoderDim: int,
+            jointSpaceDim: int,
             num_classes: int,
     ) -> None:
         super(TransducerModel, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.fc = Linear(d_model << 1, num_classes, bias=False)
+
+        self.lin_enc = torch.nn.Linear(encoderDim, jointSpaceDim)
+        self.lin_dec = torch.nn.Linear(decoderDim, jointSpaceDim, bias=False)
+
+        self.lin_out = torch.nn.Linear(jointSpaceDim, num_classes)
+
+        self.jointActivation = torch.nn.Tanh()
 
     def set_encoder(self, encoder):
         """ Setter for encoder """
@@ -230,13 +238,19 @@ class TransducerModel(BaseModel):
             encoder_outputs = encoder_outputs.unsqueeze(2)
             decoder_outputs = decoder_outputs.unsqueeze(1)
 
-            encoder_outputs = encoder_outputs.repeat([1, 1, target_length, 1])
-            decoder_outputs = decoder_outputs.repeat([1, input_length, 1, 1])
+            #encoder_outputs = encoder_outputs.repeat([1, 1, target_length, 1])
+            #decoder_outputs = decoder_outputs.repeat([1, input_length, 1, 1])
 
-        #print(encoder_outputs.size() ,decoder_outputs.size())
-        outputs = torch.cat((encoder_outputs, decoder_outputs), dim=-1)
-        #print(outputs.size())
-        outputs = self.fc(outputs).log_softmax(dim=-1)
+        #outputs = torch.cat((encoder_outputs, decoder_outputs), dim=-1)
+        #outputs = self.fc(outputs).log_softmax(dim=-1)
+
+        #enc_out = self.lin_enc(encoder_outputs)
+        #dec_out = self.lin_dec(decoder_outputs)
+
+        jointOut = self.jointActivation(self.lin_enc(encoder_outputs) + self.lin_dec(decoder_outputs))
+        #jointOut = self.jointActivation(enc_out + dec_out)
+
+        outputs = self.lin_out(jointOut).log_softmax(dim=-1)
 
         return outputs
 
@@ -260,9 +274,11 @@ class TransducerModel(BaseModel):
         Returns:
             * predictions (torch.FloatTensor): Result of model predictions.
         """
-        encoder_outputs, _ = self.encoder(inputs, input_lengths)
+        #encoder
+        encoder_outputs, encoder_out_lengths = self.encoder(inputs, input_lengths)
+        #print('input_lengths',input_lengths,'encoder_out_lengths',encoder_out_lengths)
         decoder_outputs, _ = self.decoder(targets, target_lengths)
-        return self.joint(encoder_outputs, decoder_outputs)
+        return self.joint(encoder_outputs, decoder_outputs),encoder_out_lengths
 
     @torch.no_grad()
     def decode(self, encoder_output: Tensor, max_length: int) -> Tensor:

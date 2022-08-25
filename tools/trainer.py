@@ -43,12 +43,13 @@ def trainer(mode, config, dataloader, optimizer, model, criterion, metric, train
                 )
 
             elif config.decoder == 'rnnt':
-                    outputs = model(inputs, input_lengths,targets,target_lengths)
+                    outputs,output_lengths = model(inputs, input_lengths,targets,target_lengths)
                     loss = criterion(
                     outputs,
                     targets[:, 1:].contiguous().int(),
+                    #targets.int(),
                     #targets[:, 1:].transpose(0, 1).contiguous().int(),
-                    input_lengths.int(),
+                    output_lengths.int(),
                     target_lengths.int()
                 )
             #optimizer.zero_grad()

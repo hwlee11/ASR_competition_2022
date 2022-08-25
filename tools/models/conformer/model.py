@@ -95,7 +95,7 @@ class Conformer(TransducerModel):
             decoder = DecoderRNNT(
                 num_classes=num_classes,
                 hidden_state_dim=decoder_dim,
-                output_dim=encoder_dim,
+                output_dim=decoder_dim,
                 num_layers=num_decoder_layers,
                 rnn_type=decoder_rnn_type,
                 dropout_p=decoder_dropout_p,
@@ -103,7 +103,7 @@ class Conformer(TransducerModel):
         else:
             decoder = None
         #super(Conformer, self).__init__(encoder, decoder, encoder_dim >> 1, num_classes)
-        super(Conformer, self).__init__(encoder, decoder, encoder_dim , num_classes)
+        super(Conformer, self).__init__(encoder, decoder, encoder_dim,decoder_dim,256 , num_classes)
 
     def forward(
             self,
